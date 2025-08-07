@@ -13,8 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from fastapi.responses import Response, HTMLResponse, RedirectResponse
 load_dotenv()
-COHERE_API_KEY = os.getenv("cohere_key")
-co = cohere.Client(COHERE_API_KEY)
+COHERE_KEY = os.getenv("COHERE_API_KEY")
+co = cohere.Client(COHERE_KEY)
 
 # ========== FastAPI App Setup ==========
 app = FastAPI(title="HackRX Railway-Ready API")
@@ -189,4 +189,5 @@ def download_document(url: str, save_dir: str = ".", prefix: str = "remote_") ->
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
     return local_path
+
 
