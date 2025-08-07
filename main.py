@@ -1,5 +1,4 @@
 import os
-import cohere
 import time
 import shutil
 import requests
@@ -11,9 +10,20 @@ from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from fastapi.responses import Response, HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
+import cohere
+
+# ========== Load Environment ==========
 load_dotenv()
 COHERE_KEY = os.getenv("COHERE_API_KEY")
+API_TOKEN = os.getenv("API_TOKEN")
+HF_API_TOKEN = os.getenv("HF_API_TOKEN")
+CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "hackrx_collection")
+
+if not COHERE_KEY:
+    raise RuntimeError("❌ COHERE_API_KEY not set in environment.")
+
+# ========== Cohere Client ==========
 co = cohere.Client(COHERE_KEY)
 
 # ========== FastAPI App Setup ==========
@@ -27,55 +37,52 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# Mount static files directory
 app.mount("/static", StaticFiles(directory="."), name="static")
 
 # ========== Serve HTML ==========
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
-    with open("index.html", "r", encoding="utf-8") as f:
-        html_content = f.read()
+    try:
+        with open("index.html", "r", encoding="utf-8") as f:
+            html_content = f.read()
+    except FileNotFoundError:
+        html_content = "<h1>Welcome to HackRX API</h1>"
     return HTMLResponse(content=html_content, status_code=200)
 
-# ========== Handle Favicon Gracefully ==========
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
     return RedirectResponse(url="/static/favicon.ico")
 
-
-
+# ========== Generate Answer ==========
 async def generate_answer(question, chunks):
     context = "\n".join(chunks[:3])
-    response = co.chat(
-        message=question,
-        documents=[{"title": "context", "snippet": context}],
-        model="command-r"
-    )
-    return {"answer": response.text}
-# ========== ENV & ChromaDB ==========
+    try:
+        response = co.chat(
+            message=question,
+            documents=[{"title": "context", "snippet": context}],
+            model="command-r"
+        )
+        return {"answer": response.text}
+    except Exception as e:
+        return {"answer": f"[Error generating answer: {str(e)}]"}
 
-API_TOKEN = os.getenv("API_TOKEN")
-HF_API_TOKEN = os.getenv("HF_API_TOKEN")
-CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "hackrx_collection")
-
+# ========== Chroma Setup ==========
 chroma_client = chromadb.Client()
 collection = chroma_client.get_or_create_collection(name=CHROMA_COLLECTION_NAME)
-
 doc_store: dict[str, str] = {}
 
-# ========== OpenAi Embedding ==========
-
-
+# ========== Embeddings ==========
 def get_embedding(texts: list[str]) -> list[list[float]]:
     try:
         response = co.embed(
             texts=texts,
-            input_type="search_document",  # or "classification"/"search_query"
-            model="embed-english-v3.0"     # or any available model
+            input_type="search_document",
+            model="embed-english-v3.0"
         )
         return response.embeddings
     except Exception as e:
         raise Exception("Cohere embedding API failed: " + str(e))
+
 # ========== Models ==========
 class QueryRequest(BaseModel):
     documents: str
@@ -110,9 +117,6 @@ def rule_based_summary(clause: str) -> str:
     if "only if" in cl:
         return "Limited coverage depending on criteria."
     return clause.strip()[:120] + "..."
-
-
-
 
 # ========== Endpoints ==========
 @app.post("/hackrx/upload")
@@ -179,7 +183,7 @@ async def summarize_endpoint(body: SummarizeRequest, request: Request):
         raise HTTPException(401, "Unauthorized")
     return {"summaries": [rule_based_summary(c) for c in body.clauses]}
 
-# Downloader
+# ========== File Downloader ==========
 def download_document(url: str, save_dir: str = ".", prefix: str = "remote_") -> str:
     local_filename = prefix + os.path.basename(url.split("?")[0])
     local_path = os.path.join(save_dir, local_filename)
@@ -189,5 +193,3 @@ def download_document(url: str, save_dir: str = ".", prefix: str = "remote_") ->
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
     return local_path
-
-
