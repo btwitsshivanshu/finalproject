@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-docx
+pymupdf
+requests
+python-dotenv
+chromadb
+python-multipart
+cohere
